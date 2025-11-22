@@ -26,6 +26,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # - name: Test
+      #   run: npm test
+
   deploy:
     needs: test
     runs-on: ubuntu-latest
@@ -34,83 +37,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Debug step: verify secret is present (prints only length)
-      - name: Debug EC2_SSH_KEY presence
-        run: |
-          if [ -z "${{ secrets.EC2_SSH_KEY }}" ]; then
-            echo "EC2_SSH_KEY is empty"
-            exit 1
-          else
-            LEN=$(echo -n "${{ secrets.EC2_SSH_KEY }}" | wc -c)
-            echo "EC2_SSH_KEY present (length: ${LEN} bytes)"
-          fi
-
-      # Option A: appleboy/ssh-action (original) - uncomment to use
-      # - name: Deploy to EC2 (appleboy/ssh-action)
-      #   uses: appleboy/ssh-action@v1.0.3
-      #   with:
-      #     host: ${{ secrets.EC2_HOST }}
-      #     username: ubuntu
-      #     key: ${{ secrets.EC2_SSH_KEY }}
-      #     # If your key has a passphrase also set:
-      #     # passphrase: ${{ secrets.EC2_SSH_PASSPHRASE }}
-      #     port: 22
-      #     script: |
-      #       cd /var/www/CI_CD-lab
-      #
-      #       # Pull latest code
-      #       if [ -d ".git" ]; then
-      #         git pull origin main
-      #       else
-      #         git clone https://github.com/${{ github.repository }} .
-      #       fi
-      #
-      #       # Install dependencies
-      #       npm install --omit=dev
-      #
-      #       # Stop existing app (gracefully handle if not running)
-      #       pm2 stop CI_CD-githubactions 2>/dev/null || echo "App not running, starting fresh"
-      #       pm2 delete CI_CD-githubactions 2>/dev/null || echo "No existing app to delete"
-      #
-      #       # Start app
-      #       pm2 start app.js --name CI_CD-githubactions
-      #       pm2 save
-      #
-      #       # Verify app is running
-      #       pm2 status
-      #       sleep 5
-      #       curl -f http://localhost:3000/health || echo "Health check warning"
-
-      # Option B (recommended): use ssh-agent and run ssh commands yourself
-      - name: Start ssh-agent and add key
-        uses: webfactory/ssh-agent@v0.8.1
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1.0.3
         with:
-          ssh-private-key: ${{ secrets.EC2_SSH_KEY }}
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            cd /var/www/CI_CD-lab || sudo mkdir -p /var/www/CI_CD-lab
+            sudo chown ubuntu:ubuntu /var/www/CI_CD-lab
+            cd /var/www/CI_CD-lab
 
-      - name: Deploy via ssh
-        env:
-          HOST: ${{ secrets.EC2_HOST }}
-        run: |
-          set -euo pipefail
-          ssh -o StrictHostKeyChecking=no -p 22 ubuntu@"${HOST}" bash -s <<'SSH_CMDS'
-            set -e
-            cd /var/www/CI_CD-lab || exit 1
-
+            # Pull latest code
             if [ -d ".git" ]; then
               git pull origin main
             else
-              git clone https://github.com/${GITHUB_REPOSITORY} .
+              git clone https://github.com/${{ github.repository }} .
             fi
 
+            # Install dependencies
             npm install --omit=dev
 
-            pm2 stop CI_CD-githubactions 2>/dev/null || echo "App not running, starting fresh"
-            pm2 delete CI_CD-githubactions 2>/dev/null || echo "No existing app to delete"
+            # Stop existing app (gracefully handle if not running)
+            pm2 stop ci-cd-github 2>/dev/null || echo "App not running, starting fresh"
+            pm2 delete ci-cd-github 2>/dev/null || echo "No existing app to delete"
 
-            pm2 start app.js --name CI_CD-githubactions
+            # Start app
+            pm2 start app.js --name ci-cd-github
             pm2 save
 
+            # Verify app is running
             pm2 status
             sleep 5
             curl -f http://localhost:3000/health || echo "Health check warning"
-          SSH_CMDS
