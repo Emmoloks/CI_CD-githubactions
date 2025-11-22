@@ -1,4 +1,4 @@
-name: Deploy to EC2
+name: CI/CD Deployment
 
 on:
   push:
@@ -8,65 +8,86 @@ on:
   workflow_dispatch:
 
 jobs:
+  # ----------------------------
+  # 1️⃣ Test stage
+  # ----------------------------
   test:
     runs-on: ubuntu-latest
 
     steps:
+      # Checkout repo
       - uses: actions/checkout@v4
 
+      # Setup Node.js
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: "npm"
 
+      # Install dependencies
       - name: Install dependencies
         run: npm ci
 
+      # Lint code
       - name: Lint
         run: npm run lint
 
+      # Optional: add tests
       # - name: Test
       #   run: npm test
 
+  # ----------------------------
+  # 2️⃣ Deploy stage
+  # ----------------------------
   deploy:
     needs: test
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
 
     steps:
+      # Checkout code again
       - uses: actions/checkout@v4
 
+      # ----------------------------
+      # SSH Deploy
+      # ----------------------------
       - name: Deploy to EC2
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+          timeout: 30s
+          command_timeout: 10m
+          debug: true
           script: |
-            cd /var/www/CI_CD-lab || sudo mkdir -p /var/www/CI_CD-lab
-            sudo chown ubuntu:ubuntu /var/www/CI_CD-lab
+            # Ensure deployment folder exists
+            mkdir -p /var/www/CI_CD-lab
             cd /var/www/CI_CD-lab
 
             # Pull latest code
             if [ -d ".git" ]; then
+              git reset --hard
+              git clean -fd
               git pull origin main
             else
               git clone https://github.com/${{ github.repository }} .
             fi
 
-            # Install dependencies
-            npm install --omit=dev
+            # Install dependencies deterministically
+            npm ci --omit=dev
 
-            # Stop existing app (gracefully handle if not running)
-            pm2 stop ci-cd-github 2>/dev/null || echo "App not running, starting fresh"
-            pm2 delete ci-cd-github 2>/dev/null || echo "No existing app to delete"
+            # Ensure PM2 installed
+            pm2 -v || npm install -g pm2
 
-            # Start app
-            pm2 start app.js --name ci-cd-github
+            # Zero-downtime reload
+            pm2 reload ci-cd-github || pm2 start app.js --name ci-cd-github
+
+            # Save PM2 process list
             pm2 save
 
-            # Verify app is running
-            pm2 status
+            # Wait a few seconds then check health
             sleep 5
-            curl -f http://localhost:3000/health || echo "Health check warning"
+            curl -f http://localhost:3000/health || exit 1
