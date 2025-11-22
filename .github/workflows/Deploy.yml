@@ -44,8 +44,6 @@ jobs:
           username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
-            cd /var/www/CI_CD-lab || sudo mkdir -p /var/www/CI_CD-lab
-            sudo chown -R ubuntu:ubuntu /var/www/CI_CD-lab
             cd /var/www/CI_CD-lab
 
             # Pull latest code
